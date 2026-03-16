@@ -1,11 +1,26 @@
 """
-NewsGT — WHY Layer
-Analyzes deep motivations per actor:
-  - Structural forces (Turchin, Dalio, Ibn Khaldun)
-  - Ideological scripts (actors' own published doctrines)
-  - Material interests (follow the money, follow the power)
-Confidence labeling on every claim.
-Stores result in layer_outputs (layer = 'WHY').
+NewsGT — WHY Layer (v2)
+Analyzes deep motivations per actor using evidence collected across all
+prior pipeline steps. Reasons from behavioral evidence UP to motivations,
+not from frameworks DOWN to predetermined conclusions.
+
+Evidence sources:
+  - behavioral_records: framing scores, omission profiles, language tone
+  - claims: verified facts with confidence + source agreement
+  - financial_snapshots: live market data
+  - layer_outputs (WHO): actor map + cross-source framing
+  - layer_outputs (HOW): operational levers + constraints
+
+Frameworks applied as lenses to evidence:
+  - Revealed preference: behavior reveals true priorities
+  - Security dilemma: defensive actions appear offensive, explain escalation
+  - Rentier state theory: resource-revenue states have specific political economy
+  - Rally around the flag: external conflict used to boost internal legitimacy
+  - Credible commitment problem: explains why negotiation fails
+  - Turchin structural-demographic: elite overproduction, state fragility
+  - Dalio empire/debt cycles: reserve currency, wealth gaps
+  - Ibn Khaldun asabiyyah: social cohesion, group solidarity
+  - Eschatological scripts: ideological end-states driving behavior
 """
 
 import os
@@ -25,85 +40,264 @@ REQUEST_DELAY = 1.0
 # ── WHY prompt ────────────────────────────────────────────────────────────────
 WHY_PROMPT = """You are a geopolitical deep motivation analysis engine.
 
-You will be given:
-1. Verified event sequence
-2. Actor map (WHO layer)
-3. Operational mechanics (HOW layer)
-4. Financial data (with availability flags)
-5. Verified claims with confidence labels
+You reason from EVIDENCE UP to motivations. Not from frameworks DOWN to conclusions.
 
-Your task: analyze DEEP MOTIVATIONS per actor across three sub-lenses.
+REASONING CHAIN (follow exactly):
+1. Scan ALL behavioral evidence provided
+2. Identify the 3-5 SHARPEST signals — the most specific, most divergent, most revealing
+3. For each sharp signal, name the exact source and quote the exact behavior
+4. Select the framework that best explains WHY that specific behavior occurred
+5. State a falsifiable conclusion tied to that specific evidence
 
-SUB-LENS 1 — STRUCTURAL FORCES
-Apply Turchin (elite overproduction, state fragility, intra-elite competition),
-Dalio (debt/empire cycles, reserve currency dynamics), and
-Ibn Khaldun (asabiyyah — social cohesion, group solidarity) frameworks.
-What structural pressures are driving this actor's behavior?
+WHAT COUNTS AS A SHARP SIGNAL:
+- A source using loaded language that reveals editorial positioning (e.g. "relentlessly bombing", "deception and trickery", "fighting for survival")
+- An actor framed as AGENT by some sources and PATIENT by others on the same action
+- A fact present in the master set but absent from a specific source's coverage
+- A financial metric that directly constrains an actor's options
+- A behavioral gap between what an actor says and what they do
 
-SUB-LENS 2 — IDEOLOGICAL SCRIPTS
-What documented ideology, doctrine, or strategic framework is this actor following?
-Cite only publicly stated doctrines, published strategies, or official positions.
-Examples: US neoconservative foreign policy doctrine, Israeli security doctrine,
-Iranian revolutionary ideology, etc.
-NO conspiracy inference — only what actors themselves have stated publicly.
+CITATION RULES — non-negotiable:
+- Every claim MUST name the specific source: "[Dawn]", "[Tribune.com.pk]", "[Jerusalem Post]"
+- Every language signal MUST quote the exact term used: "Dawn uses 'relentlessly bombing' to describe US action"
+- Every framing signal MUST state the role: "[CBS News] frames Iran as PATIENT receiving strikes, [Dawn] frames Iran as AGENT fighting for survival"
+- Every financial signal MUST state the number: "Iranian Rial at 0.0 USD indicates currency collapse"
+- NO generic summaries. NO "sources indicate". NO "according to the evidence"
 
-SUB-LENS 3 — MATERIAL INTERESTS
-Follow the money and the power.
-What does this actor concretely gain or lose regardless of stated position?
-Ground in financial data where available.
+AVAILABLE FRAMEWORKS (apply as lenses to specific evidence only):
+- Revealed preference: gap between stated position and observable behavior = true priority
+- Security dilemma: defensive actions appear offensive, explain why de-escalation is hard
+- Rentier state theory: resource-revenue states face existential pressure when revenue threatened
+- Rally around the flag: leaders under domestic pressure escalate external conflict for legitimacy
+- Credible commitment problem: explains why negotiation fails even when actors want peace
+- Turchin structural-demographic: elite overproduction, state fragility, intra-elite competition
+- Dalio empire/debt cycles: reserve currency dynamics, imperial overextension
+- Ibn Khaldun asabiyyah: declining social cohesion = increasing state fragility
+- Eschatological scripts: ideological end-states prescribing behavior regardless of cost
 
-CONFIDENCE LABELING — apply to every analytical claim:
-ESTABLISHED: documented, verifiable fact
-PROBABLE: strongly supported by multiple evidence strands
-ASSESSED: reasoned inference from available evidence
-SPECULATIVE: plausible hypothesis, limited direct evidence
+CONFIDENCE LABELING — every claim:
+ESTABLISHED: directly quoted from evidence provided
+PROBABLE: supported by 2+ independent named sources
+ASSESSED: reasoned inference from named evidence
+SPECULATIVE: plausible but no direct evidence — must say so explicitly
 
-NOTE: Downgrade confidence when financial data is unavailable.
+EXAMPLE OUTPUT STRUCTURE (follow this exactly):
+{
+  "actor_motivations": [
+    {
+      "actor": "Iran",
+      "sharp_signals": [
+        {
+          "signal_type": "language",
+          "source": "Dawn",
+          "observation": "Dawn uses 'relentlessly bombing' to describe US action against Iran",
+          "significance": "Reveals Dawn frames this as indiscriminate aggression, not targeted strikes"
+        },
+        {
+          "signal_type": "framing",
+          "source": "CBS News vs Dawn",
+          "observation": "CBS News frames Iran as PATIENT receiving strikes; Dawn frames Iran as AGENT fighting for survival",
+          "significance": "Same actor, opposite roles — Western vs Pakistani press divergence on who is aggressor"
+        },
+        {
+          "signal_type": "financial",
+          "source": "financial_snapshots",
+          "observation": "Iranian Rial at 0.0 USD — effectively worthless against the dollar",
+          "significance": "Currency collapse constrains Iran's ability to finance prolonged conflict"
+        }
+      ],
+      "motivation_analysis": [
+        {
+          "framework": "Rentier state theory",
+          "triggered_by": "Iranian Rial at 0.0 USD combined with Hormuz closure blocking oil exports",
+          "conclusion": "Iran's Hormuz closure is an act of economic desperation — blocking others' oil because their own revenue is collapsing",
+          "prediction": "Iran will maintain Hormuz threat as long as sanctions pressure continues — it is their only remaining leverage",
+          "confidence": "PROBABLE"
+        }
+      ],
+      "primary_motivation": "Iran is optimizing for regime survival under simultaneous external military pressure and internal economic collapse [Dawn: 'fighting for survival', Rial at 0.0]",
+      "confidence_overall": "PROBABLE"
+    }
+  ]
+}
 
-RULES:
-- Every claim needs a confidence label
-- Distinguish between empirically validated frameworks (PROBABLE/ESTABLISHED)
-  and applied interpretations (ASSESSED/SPECULATIVE)
-- No hidden actors, no conspiracy framing
-- Ground ideological scripts in publicly available documents
+Now analyze the actual evidence provided. Use this structure exactly.
 
-Return ONLY valid JSON:
 {
   "actor_motivations": [
     {
       "actor": "string",
-      "structural_forces": {
-        "analysis": "string",
-        "turchin_signal": "string — elite overproduction / state fragility indicators",
-        "dalio_signal": "string — empire/debt cycle position",
-        "ibn_khaldun_signal": "string — asabiyyah level and direction",
-        "confidence": "ESTABLISHED|PROBABLE|ASSESSED|SPECULATIVE"
-      },
-      "ideological_script": {
-        "doctrine": "string — name of doctrine/framework",
-        "description": "string — what this doctrine prescribes",
-        "evidence": "string — publicly stated source",
-        "how_it_applies": "string — how it explains this actor's behavior",
-        "confidence": "ESTABLISHED|PROBABLE|ASSESSED|SPECULATIVE"
-      },
-      "material_interests": {
-        "gains": ["string — concrete gain"],
-        "losses": ["string — concrete loss/risk"],
-        "financial_grounding": "string — what financial data supports this",
-        "confidence": "ESTABLISHED|PROBABLE|ASSESSED|SPECULATIVE"
-      }
+      "sharp_signals": [
+        {
+          "signal_type": "framing|omission|language|financial|behavioral_gap",
+          "source": "string — exact source name",
+          "observation": "string — exact quote or specific behavior observed",
+          "significance": "string — what this reveals about motivation"
+        }
+      ],
+      "motivation_analysis": [
+        {
+          "framework": "string — name of framework",
+          "triggered_by": "string — exact signal that triggered this framework (name source + behavior)",
+          "conclusion": "string — specific falsifiable motivation claim",
+          "prediction": "string — what this framework predicts comes next",
+          "confidence": "ESTABLISHED|PROBABLE|ASSESSED|SPECULATIVE"
+        }
+      ],
+      "primary_motivation": "string — one sentence, must reference at least one specific signal",
+      "confidence_overall": "ESTABLISHED|PROBABLE|ASSESSED|SPECULATIVE"
     }
   ],
-  "synthesis": "string — 3 sentences max. The working narrative that survives all three lenses.",
+  "synthesis": "string — 3 sentences max. Must cite at least 3 specific sources by name with specific observations.",
   "key_variable": "string — the single observable thing that confirms or breaks this analysis",
-  "confidence_assessment": "string — overall confidence level and what would falsify it"
+  "confidence_assessment": "string — overall level and what specific evidence would falsify it"
 }"""
 
 
-def build_why(story_id: str) -> dict:
-    """Build WHY layer for a story."""
+def build_evidence_package(story_id: str) -> dict:
+    """
+    Assemble the full evidence trail from all prior pipeline steps.
+    This is what makes WHY trustworthy — it reasons from collected evidence.
+    """
+    evidence = {}
 
-    # Load story
+    # ── Behavioral records: framing, omissions, language per source ───────────
+    behavioral = (
+        sb.table("behavioral_records")
+        .select("framing_scores, omission_profile, language_tone, "
+                "sourcing_profile, divergence_flag, divergence_detail, "
+                "source_profiles(name, credibility_weight)")
+        .eq("story_id", story_id)
+        .execute()
+    ).data or []
+
+    framing_signals   = []
+    omission_signals  = []
+    language_signals  = []
+    sourcing_signals  = []
+    divergence_flags  = []
+
+    for rec in behavioral:
+        source = (rec.get("source_profiles") or {}).get("name", "Unknown")
+        cred   = (rec.get("source_profiles") or {}).get("credibility_weight", 0.4)
+
+        # Framing per actor
+        for actor in (rec.get("framing_scores") or {}).get("actors", []):
+            framing_signals.append({
+                "source":     source,
+                "credibility": cred,
+                "actor":      actor.get("name", ""),
+                "role":       actor.get("role", ""),
+                "verb":       actor.get("verb", ""),
+                "note":       actor.get("framing_note", "")[:100],
+            })
+
+        # Omissions
+        missing = (rec.get("omission_profile") or {}).get("missing_facts", [])
+        if missing:
+            omission_signals.append({
+                "source":   source,
+                "missing":  missing[:3],
+                "pattern":  (rec.get("omission_profile") or {}).get("omission_notes", "")[:100],
+            })
+
+        # Language
+        loaded = (rec.get("language_tone") or {}).get("loaded_terms", [])
+        tone   = (rec.get("language_tone") or {}).get("overall_tone", "")
+        if loaded or tone:
+            language_signals.append({
+                "source":       source,
+                "loaded_terms": loaded[:3],
+                "tone":         tone[:80],
+            })
+
+        # Sourcing gaps
+        absent = (rec.get("sourcing_profile") or {}).get("sides_absent", [])
+        if absent:
+            sourcing_signals.append({
+                "source":  source,
+                "absent":  absent,
+                "notes":   (rec.get("sourcing_profile") or {}).get("sourcing_notes", "")[:80],
+            })
+
+        # Divergences
+        if rec.get("divergence_flag"):
+            divergence_flags.append({
+                "source": source,
+                "detail": rec.get("divergence_detail", ""),
+            })
+
+    evidence["framing"]    = framing_signals
+    evidence["omissions"]  = omission_signals
+    evidence["language"]   = language_signals
+    evidence["sourcing"]   = sourcing_signals
+    evidence["divergences"]= divergence_flags
+
+    # ── Claims: verified facts with confidence + source agreement ─────────────
+    claims = (
+        sb.table("claims")
+        .select("claim_text, confidence_label, sources_reporting, "
+                "agenda_poles_covered, confidence_score")
+        .eq("story_id", story_id)
+        .order("confidence_score", desc=True)
+        .execute()
+    ).data or []
+
+    evidence["verified_claims"] = [
+        {
+            "claim":       c["claim_text"],
+            "confidence":  c["confidence_label"],
+            "score":       c["confidence_score"],
+            "sources":     c["sources_reporting"],
+            "poles":       c["agenda_poles_covered"],
+        }
+        for c in claims
+    ]
+
+    # ── Financial snapshots ───────────────────────────────────────────────────
+    financials = (
+        sb.table("financial_snapshots")
+        .select("metric_name, value, unit, relevance_note, available")
+        .eq("story_id", story_id)
+        .execute()
+    ).data or []
+
+    evidence["financial"] = [
+        {
+            "metric":    f["metric_name"],
+            "value":     f["value"] if f["available"] else "UNAVAILABLE",
+            "unit":      f.get("unit", ""),
+            "relevance": f.get("relevance_note", "")[:100],
+            "available": f["available"],
+        }
+        for f in financials
+    ]
+
+    # ── WHO layer: actor map + cross-source framing ───────────────────────────
+    who = (
+        sb.table("layer_outputs")
+        .select("content")
+        .eq("story_id", story_id)
+        .eq("layer", "WHO")
+        .execute()
+    ).data
+    evidence["who"] = who[0]["content"] if who else {}
+
+    # ── HOW layer: levers + constraints ──────────────────────────────────────
+    how = (
+        sb.table("layer_outputs")
+        .select("content")
+        .eq("story_id", story_id)
+        .eq("layer", "HOW")
+        .execute()
+    ).data
+    evidence["how"] = how[0]["content"] if how else {}
+
+    return evidence
+
+
+def build_why(story_id: str) -> dict:
+    """Build WHY layer for a story using full evidence package."""
+
     story_result = (
         sb.table("stories")
         .select("id, category_label, master_fact_set, headline")
@@ -114,89 +308,56 @@ def build_why(story_id: str) -> dict:
         print(f"  Story not found: {story_id}")
         return {}
 
-    story     = story_result.data[0]
-    category  = story["category_label"]
-    master_fs = story.get("master_fact_set") or {}
-    headline  = (story.get("headline") or "")[:60]
+    story    = story_result.data[0]
+    headline = (story.get("headline") or "")[:60]
 
     print(f"\n── WHY: {headline} ──")
+    print(f"  Building evidence package...")
 
-    # Load WHO layer
-    who_result = (
-        sb.table("layer_outputs")
-        .select("content")
-        .eq("story_id", story_id)
-        .eq("layer", "WHO")
-        .execute()
-    )
-    if not who_result.data:
-        print(f"  WHO layer not found — run who.py first")
-        return {}
-    who_content = who_result.data[0]["content"]
+    # Assemble full evidence trail
+    evidence = build_evidence_package(story_id)
 
-    # Load HOW layer
-    how_result = (
-        sb.table("layer_outputs")
-        .select("content")
-        .eq("story_id", story_id)
-        .eq("layer", "HOW")
-        .execute()
-    )
-    if not how_result.data:
-        print(f"  HOW layer not found — run how.py first")
-        return {}
-    how_content = how_result.data[0]["content"]
+    n_framing   = len(evidence.get("framing", []))
+    n_omissions = len(evidence.get("omissions", []))
+    n_claims    = len(evidence.get("verified_claims", []))
+    n_financial = sum(1 for f in evidence.get("financial", []) if f["available"])
+    print(f"  Evidence: {n_framing} framing signals, {n_omissions} omission profiles, "
+          f"{n_claims} verified claims, {n_financial} live financial metrics")
 
-    # Load financial snapshots
-    fin_result = (
-        sb.table("financial_snapshots")
-        .select("metric_name, value, unit, relevance_note, available")
-        .eq("story_id", story_id)
-        .execute()
-    )
-    financial = fin_result.data or []
-
-    # Load claims
-    claims_result = (
-        sb.table("claims")
-        .select("claim_text, confidence_label")
-        .eq("story_id", story_id)
-        .execute()
-    )
-    claims = claims_result.data or []
-
-    # Format financial summary
-    fin_lines = []
-    for f in financial:
-        if f["available"] and f["value"] is not None:
-            fin_lines.append(
-                f"{f['metric_name']}: {f['value']} {f.get('unit','')} "
-                f"[AVAILABLE] — {f.get('relevance_note','')}"
-            )
-        else:
-            fin_lines.append(
-                f"{f['metric_name']}: UNAVAILABLE — "
-                f"{f.get('relevance_note','')} [confidence downgraded]"
-            )
-
+    # Build prompt with full evidence
     prompt = f"""VERIFIED EVENT SEQUENCE:
-{json.dumps(master_fs.get('verified_sequence', []), indent=2)}
+{json.dumps(story.get('master_fact_set', {}).get('verified_sequence', []), indent=2)}
 
-ACTOR MAP (WHO):
-{json.dumps(who_content.get('actors', []), indent=2)}
+CATEGORY: {story['category_label']}
 
-OPERATIONAL MECHANICS (HOW):
-{json.dumps(how_content.get('actor_mechanics', []), indent=2)}
+═══ BEHAVIORAL EVIDENCE ═══
 
-FINANCIAL DATA:
-{chr(10).join(fin_lines) if fin_lines else 'No financial data available'}
+FRAMING SIGNALS (how sources position each actor):
+{json.dumps(evidence['framing'], indent=2)}
 
-VERIFIED CLAIMS:
-{json.dumps([{'claim': c['claim_text'], 'confidence': c['confidence_label']} for c in claims], indent=2)}
+OMISSION PROFILES (what sources chose not to report):
+{json.dumps(evidence['omissions'], indent=2)}
 
-CATEGORY: {category}
+LANGUAGE SIGNALS (loaded terms and tone per source):
+{json.dumps(evidence['language'], indent=2)}
 
-Analyze deep motivations. Return only valid JSON."""
+SOURCING GAPS (whose voices are absent):
+{json.dumps(evidence['sourcing'], indent=2)}
+
+═══ VERIFIED CLAIMS (confidence-weighted) ═══
+{json.dumps(evidence['verified_claims'], indent=2)}
+
+═══ FINANCIAL SIGNALS ═══
+{json.dumps(evidence['financial'], indent=2)}
+
+═══ WHO LAYER (actor map + stated positions) ═══
+{json.dumps(evidence['who'].get('actors', []), indent=2)}
+
+═══ HOW LAYER (operational mechanics) ═══
+{json.dumps(evidence['how'].get('actor_mechanics', []), indent=2)}
+
+Now reason from this evidence to deep motivations. 
+Cite specific evidence for every claim. Return only valid JSON."""
 
     try:
         response = client.chat.completions.create(
@@ -233,12 +394,12 @@ Analyze deep motivations. Return only valid JSON."""
         print(f"  ⚠️  WHY LLM error: {e}")
         return {}
 
-    # Overall confidence from actor motivations
+    # Overall confidence
     conf_labels = []
     for m in result.get("actor_motivations", []):
-        for lens in ["structural_forces", "ideological_script", "material_interests"]:
-            c = m.get(lens, {}).get("confidence", "ASSESSED")
-            conf_labels.append(c)
+        conf_labels.append(m.get("confidence_overall", "ASSESSED"))
+        for fw in m.get("motivation_analysis", []):
+            conf_labels.append(fw.get("confidence", "ASSESSED"))
 
     conf_order   = ["ESTABLISHED", "PROBABLE", "ASSESSED", "SPECULATIVE"]
     overall_conf = "ASSESSED"
@@ -246,7 +407,7 @@ Analyze deep motivations. Return only valid JSON."""
         counts       = {c: conf_labels.count(c) for c in conf_order}
         overall_conf = max(counts, key=counts.get)
 
-    # Store in layer_outputs
+    # Store
     sb.table("layer_outputs").insert({
         "story_id":          story_id,
         "layer":             "WHY",
@@ -255,28 +416,31 @@ Analyze deep motivations. Return only valid JSON."""
         "model_used":        GROQ_MODEL,
     }).execute()
 
-    # Print synthesis
+    # Print
     print(f"\n  SYNTHESIS:")
     print(f"  {result.get('synthesis', '')}")
     print(f"\n  KEY VARIABLE:")
     print(f"  {result.get('key_variable', '')}")
-    print(f"\n  CONFIDENCE:")
+    print(f"\n  CONFIDENCE: {overall_conf}")
     print(f"  {result.get('confidence_assessment', '')}")
     print()
 
     for mot in result.get("actor_motivations", []):
         actor = mot.get("actor", "")
-        print(f"  [{actor}]")
+        print(f"  [{actor}] — {mot.get('primary_motivation', '')[:100]}")
 
-        struct = mot.get("structural_forces", {})
-        print(f"    STRUCTURAL [{struct.get('confidence','?')}]: {struct.get('analysis','')[:100]}")
+        # Sharp signals
+        for sig in mot.get("sharp_signals", [])[:3]:
+            print(f"    [{sig.get('signal_type','?').upper()}] "
+                  f"[{sig.get('source','')}] {sig.get('observation','')[:90]}")
+            print(f"      → {sig.get('significance','')[:80]}")
 
-        ideo = mot.get("ideological_script", {})
-        print(f"    IDEOLOGY [{ideo.get('confidence','?')}]: {ideo.get('doctrine','')} — {ideo.get('how_it_applies','')[:80]}")
-
-        mat = mot.get("material_interests", {})
-        gains = mat.get("gains", [])
-        print(f"    MATERIAL [{mat.get('confidence','?')}]: gains={gains[:2]}")
+        # Motivation analysis
+        for fw in mot.get("motivation_analysis", [])[:2]:
+            print(f"    [{fw.get('confidence','?')}] {fw.get('framework','')}")
+            print(f"      Triggered by: {fw.get('triggered_by','')[:80]}")
+            print(f"      Conclusion:   {fw.get('conclusion','')[:80]}")
+            print(f"      Predicts:     {fw.get('prediction','')[:80]}")
         print()
 
     return result

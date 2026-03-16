@@ -256,7 +256,7 @@ def filter_articles(articles: list[dict],
     return result
 
 
-MAX_ARTICLES_PER_STORY = 20  # token budget: ~40K for extraction, ~60K for analysis
+MAX_ARTICLES_PER_STORY = 10  # token budget: ~20K for extraction, ~80K for analysis
 
 
 def select_diverse_articles(articles: list[dict],

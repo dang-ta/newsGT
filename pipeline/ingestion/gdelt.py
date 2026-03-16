@@ -1,7 +1,8 @@
 """
 NewsGT — GDELT Ingestion
-Fetches articles from GDELT DOC 2.0 API for a given topic/keyword,
-filters against our source universe, and stores into stories + articles tables.
+Fetches articles from GDELT DOC 2.0 API for a given topic/keyword.
+Quality filters before storing. Known sources get rated credibility_weight,
+unknown sources that pass quality filter get default 0.4.
 """
 
 import os
@@ -15,7 +16,11 @@ from supabase import create_client
 load_dotenv()
 sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY"))
 
-# ── Domain map: source name → domain (mirrors seed_sources.py) ───────────────
+GDELT_API          = "https://api.gdeltproject.org/api/v2/doc/doc"
+GDELT_MIN_INTERVAL = 6   # seconds between requests
+_last_request_time = 0.0
+
+# ── Domain map: source name → domain ─────────────────────────────────────────
 SOURCE_DOMAINS = {
     "Reuters":                  "reuters.com",
     "Associated Press":         "apnews.com",
@@ -56,13 +61,8 @@ SOURCE_DOMAINS = {
     "Arab News":                "arabnews.com",
 }
 
-# Reverse map: domain → source name
 DOMAIN_TO_SOURCE = {v: k for k, v in SOURCE_DOMAINS.items()}
 
-# All domains in our universe
-ALL_DOMAINS = list(SOURCE_DOMAINS.values())
-
-# ── Category → GDELT keyword map ──────────────────────────────────────────────
 CATEGORY_KEYWORDS = {
     "Middle East & Gulf":           ["Gaza", "Israel", "Iran", "Hamas", "Hezbollah",
                                      "West Bank", "Saudi Arabia", "Yemen", "Lebanon"],
@@ -85,25 +85,8 @@ CATEGORY_KEYWORDS = {
 }
 
 
-GDELT_API = "https://api.gdeltproject.org/api/v2/doc/doc"
-GDELT_MIN_INTERVAL = 6  # seconds between requests (limit is 1 per 5s)
-_last_request_time = 0.0
-
-
-def _gdelt_request(params: dict) -> requests.Response:
-    """Enforce rate limit and make GDELT request."""
-    global _last_request_time
-    elapsed = time.time() - _last_request_time
-    if elapsed < GDELT_MIN_INTERVAL:
-        wait = GDELT_MIN_INTERVAL - elapsed
-        time.sleep(wait)
-    _last_request_time = time.time()
-    return requests.get(GDELT_API, params=params, timeout=30)
-
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def get_source_id_map() -> dict:
-    """Fetch source_id for each domain from source_profiles."""
     result = sb.table("source_profiles").select("id, name").execute()
     name_to_id = {r["name"]: r["id"] for r in result.data}
     return {
@@ -114,18 +97,15 @@ def get_source_id_map() -> dict:
 
 
 def cluster_id_from_urls(urls: list[str]) -> str:
-    """Generate a stable cluster ID from the set of article URLs."""
     combined = "|".join(sorted(urls))
     return hashlib.md5(combined.encode()).hexdigest()
 
 
 def domain_from_url(url: str) -> str:
-    """Extract base domain from URL."""
     try:
         from urllib.parse import urlparse
         parsed = urlparse(url)
         netloc = parsed.netloc.lower()
-        # Strip www.
         if netloc.startswith("www."):
             netloc = netloc[4:]
         return netloc
@@ -134,13 +114,8 @@ def domain_from_url(url: str) -> str:
 
 
 def match_domain_to_source(url_domain: str, source_id_map: dict) -> str | None:
-    """Match article domain to one of our source domains."""
-    # Exact match first
     if url_domain in source_id_map:
         return url_domain
-    # Subdomain match only: url_domain must END with .known_domain
-    # e.g. asia.nikkei.com → nikkei.com  ✅
-    # e.g. breitbart.com → rt.com        ❌
     for known_domain in source_id_map:
         if url_domain == known_domain:
             return known_domain
@@ -150,7 +125,6 @@ def match_domain_to_source(url_domain: str, source_id_map: dict) -> str | None:
 
 
 def story_exists(cluster_id: str) -> bool:
-    """Check if story already exists in DB."""
     result = (
         sb.table("stories")
         .select("id")
@@ -162,7 +136,6 @@ def story_exists(cluster_id: str) -> bool:
 
 
 def article_exists(url: str) -> bool:
-    """Check if article already exists in DB."""
     result = (
         sb.table("articles")
         .select("id")
@@ -173,11 +146,40 @@ def article_exists(url: str) -> bool:
     return len(result.data) > 0
 
 
-# ── Core ingestion ────────────────────────────────────────────────────────────
+def get_or_create_unrated_source(domain: str) -> str:
+    """Get or create a minimal source profile for unknown domains."""
+    existing = (
+        sb.table("source_profiles")
+        .select("id")
+        .eq("name", domain)
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        return existing.data[0]["id"]
+    new_src = sb.table("source_profiles").insert({
+        "name":               domain,
+        "status":             "active",
+        "mbfc_credibility":   "Mixed",
+        "credibility_weight": 0.4,
+        "manual_bias_profiles": {},
+        "pattern_threshold":  {},
+    }).execute()
+    return new_src.data[0]["id"]
+
+
+# ── GDELT request ─────────────────────────────────────────────────────────────
+def _gdelt_request(params: dict) -> requests.Response:
+    global _last_request_time
+    elapsed = time.time() - _last_request_time
+    if elapsed < GDELT_MIN_INTERVAL:
+        time.sleep(GDELT_MIN_INTERVAL - elapsed)
+    _last_request_time = time.time()
+    return requests.get(GDELT_API, params=params, timeout=30)
+
+
 def fetch_articles(keyword: str, timespan: str = "24h",
-                   max_records: int = 250,
-                   retries: int = 3) -> list[dict]:
-    """Fetch articles from GDELT DOC API directly via requests with retry."""
+                   max_records: int = 250, retries: int = 3) -> list[dict]:
     params = {
         "query":      f"{keyword} sourcelang:english",
         "mode":       "artlist",
@@ -194,41 +196,105 @@ def fetch_articles(keyword: str, timespan: str = "24h",
                 time.sleep(wait)
                 continue
             r.raise_for_status()
-            data = r.json()
-            return data.get("articles", [])
+            return r.json().get("articles", [])
         except Exception as e:
             if attempt < retries - 1:
-                wait = 10 * (attempt + 1)
-                print(f"  ⚠️  Fetch error, retrying in {wait}s: {e}")
-                time.sleep(wait)
+                print(f"  ⚠️  Fetch error, retrying in {10*(attempt+1)}s: {e}")
+                time.sleep(10 * (attempt + 1))
             else:
                 print(f"  ⚠️  GDELT fetch failed after {retries} attempts: {e}")
     return []
 
 
-def filter_to_universe(articles: list[dict],
-                        source_id_map: dict) -> list[dict]:
-    """Keep only articles from our source universe."""
-    filtered = []
+# ── Quality filter ────────────────────────────────────────────────────────────
+def filter_articles(articles: list[dict],
+                    source_id_map: dict) -> list[dict]:
+    """
+    Quality filter — keep articles with real signal, discard noise.
+    Accepts articles from ANY source (including state media).
+    Known sources get rated credibility_weight.
+    Unknown sources that appear 2+ times get default 0.4.
+
+    Filters out:
+    - Missing domain or title
+    - Domains appearing only once (low-traffic noise)
+    - Non-English articles
+    """
+    # Count domain frequency
+    domain_counts: dict[str, int] = {}
     for article in articles:
-        url = article.get("url", "")
+        d = domain_from_url(article.get("url", ""))
+        if d:
+            domain_counts[d] = domain_counts.get(d, 0) + 1
+
+    result = []
+    for article in articles:
+        url    = article.get("url", "")
+        title  = article.get("title", "").strip()
+        lang   = article.get("language", "")
         domain = domain_from_url(url)
+
+        if not domain or not title:
+            continue
+        if lang and lang.lower() not in ("english", "en"):
+            continue
+        if domain_counts.get(domain, 0) < 2:
+            continue
+
         matched = match_domain_to_source(domain, source_id_map)
         if matched:
             article["_matched_domain"] = matched
-            article["_source_id"] = source_id_map[matched]
-            filtered.append(article)
-    return filtered
+            article["_source_id"]      = source_id_map[matched]
+            article["_known_source"]   = True
+        else:
+            article["_matched_domain"] = domain
+            article["_source_id"]      = None
+            article["_known_source"]   = False
+
+        result.append(article)
+
+    return result
+
+
+MAX_ARTICLES_PER_STORY = 20  # token budget: ~40K for extraction, ~60K for analysis
+
+
+def select_diverse_articles(articles: list[dict],
+                             max_count: int = MAX_ARTICLES_PER_STORY) -> list[dict]:
+    """
+    Select up to max_count articles prioritising source diversity.
+    Known (rated) sources selected first — one per domain.
+    Remaining slots filled from unknown sources.
+    """
+    known   = [a for a in articles if a.get("_known_source")]
+    unknown = [a for a in articles if not a.get("_known_source")]
+
+    # Deduplicate known sources — one article per source domain
+    seen_domains: set[str] = set()
+    diverse_known = []
+    for a in known:
+        d = a.get("_matched_domain", "")
+        if d not in seen_domains:
+            seen_domains.add(d)
+            diverse_known.append(a)
+
+    selected = diverse_known[:max_count]
+
+    # Fill remaining slots with unknown sources (different domains)
+    remaining = max_count - len(selected)
+    if remaining > 0:
+        seen_unknown: set[str] = set()
+        for a in unknown:
+            d = a.get("_matched_domain", "")
+            if d not in seen_unknown and remaining > 0:
+                seen_unknown.add(d)
+                selected.append(a)
+                remaining -= 1
+
+    return selected
 
 
 def assign_thread(category: str, headline: str) -> tuple[str | None, int]:
-    """
-    Find existing thread for this category or return None to create new.
-    Simple approach: find most recent thread root in same category
-    from last 7 days with keyword overlap.
-    Returns (thread_id, sequence_number).
-    """
-    # Find recent stories in same category
     result = (
         sb.table("stories")
         .select("id, thread_id, thread_sequence, headline, is_thread_root")
@@ -238,17 +304,13 @@ def assign_thread(category: str, headline: str) -> tuple[str | None, int]:
         .limit(10)
         .execute()
     )
-
     if not result.data:
-        return None, 1  # No existing thread — this becomes root
+        return None, 1
 
-    # Simple keyword overlap check
     headline_words = set(headline.lower().split())
     for row in result.data:
         existing_words = set((row["headline"] or "").lower().split())
-        overlap = len(headline_words & existing_words)
-        if overlap >= 3:  # At least 3 words in common
-            # Find current max sequence in this thread
+        if len(headline_words & existing_words) >= 3:
             thread_id = row["thread_id"] or row["id"]
             seq_result = (
                 sb.table("stories")
@@ -261,19 +323,12 @@ def assign_thread(category: str, headline: str) -> tuple[str | None, int]:
             next_seq = (seq_result.data[0]["thread_sequence"] or 0) + 1 if seq_result.data else 2
             return thread_id, next_seq
 
-    return None, 1  # No matching thread — new root
+    return None, 1
 
 
+# ── Core ingestion ────────────────────────────────────────────────────────────
 def ingest_topic(keyword: str, category: str,
                  timespan: str = "24h") -> dict:
-    """
-    Full ingestion pipeline for a keyword + category:
-    1. Fetch from GDELT
-    2. Filter to source universe
-    3. Create story record
-    4. Store articles
-    Returns summary dict.
-    """
     print(f"\n── Ingesting: '{keyword}' [{category}] ──")
     source_id_map = get_source_id_map()
 
@@ -284,64 +339,75 @@ def ingest_topic(keyword: str, category: str,
     if not raw_articles:
         return {"keyword": keyword, "fetched": 0, "stored": 0, "skipped": 0}
 
-    # 2. Filter to universe
-    universe_articles = filter_to_universe(raw_articles, source_id_map)
-    print(f"  In our universe: {len(universe_articles)} articles")
+    # 2. Quality filter
+    filtered = filter_articles(raw_articles, source_id_map)
+    known    = sum(1 for a in filtered if a.get("_known_source"))
+    unknown  = len(filtered) - known
+    print(f"  After quality filter: {len(filtered)} articles "
+          f"({known} rated, {unknown} unrated/default 0.4)")
 
-    if not universe_articles:
+    if not filtered:
         return {"keyword": keyword, "fetched": len(raw_articles),
                 "stored": 0, "skipped": len(raw_articles)}
 
-    # 3. Generate cluster ID
-    urls = [a["url"] for a in universe_articles]
+    # 3. Diverse selection — cap for token budget
+    selected = select_diverse_articles(filtered)
+    print(f"  Selected: {len(selected)}/{len(filtered)} "
+          f"(capped at {MAX_ARTICLES_PER_STORY} for token budget)")
+
+    # 4. Cluster ID from selected articles
+    urls       = [a["url"] for a in selected]
     cluster_id = cluster_id_from_urls(urls)
 
-    # 4. Skip if story already exists
+    # 5. Skip if exists
     if story_exists(cluster_id):
-        print(f"  Story already exists (cluster: {cluster_id[:8]}...) — skipping")
+        print(f"  Story already exists — skipping")
         return {"keyword": keyword, "fetched": len(raw_articles),
-                "stored": 0, "skipped": len(universe_articles)}
+                "stored": 0, "skipped": len(selected)}
 
-    # 5. Thread assignment
-    headline = universe_articles[0].get("title", keyword)
+    # 6. Thread assignment
+    headline              = selected[0].get("title", keyword)
     thread_id, thread_seq = assign_thread(category, headline)
-    is_root = thread_id is None
+    is_root               = thread_id is None
 
-    # 6. Create story record
+    # 7. Create story
     story_data = {
-        "gdelt_cluster_id":  cluster_id,
-        "category_label":    category,
-        "headline":          headline,
-        "timestamp":         datetime.now(timezone.utc).isoformat(),
-        "master_fact_set":   {},
-        "master_version":    0,
-        "thread_sequence":   thread_seq,
-        "is_thread_root":    is_root,
+        "gdelt_cluster_id": cluster_id,
+        "category_label":   category,
+        "headline":         headline,
+        "timestamp":        datetime.now(timezone.utc).isoformat(),
+        "master_fact_set":  {},
+        "master_version":   0,
+        "thread_sequence":  thread_seq,
+        "is_thread_root":   is_root,
     }
     if thread_id:
         story_data["thread_id"] = thread_id
 
     story_result = sb.table("stories").insert(story_data).execute()
-    story_id = story_result.data[0]["id"]
+    story_id     = story_result.data[0]["id"]
 
-    # If this is root, set thread_id = its own id
     if is_root:
-        sb.table("stories").update(
-            {"thread_id": story_id}
-        ).eq("id", story_id).execute()
+        sb.table("stories").update({"thread_id": story_id}).eq("id", story_id).execute()
 
     print(f"  Story created: {story_id[:8]}... "
           f"({'root' if is_root else f'seq {thread_seq}'})")
 
-    # 7. Store articles
+    # 8. Store articles
     stored, skipped = 0, 0
-    for article in universe_articles:
+    for article in selected:
         url = article.get("url", "")
         if not url or article_exists(url):
             skipped += 1
             continue
 
-        # Parse published date
+        # Resolve source_id
+        source_id = article.get("_source_id")
+        if not source_id:
+            source_id = get_or_create_unrated_source(
+                article.get("_matched_domain", "unknown")
+            )
+
         seen_date = article.get("seendate", "")
         try:
             pub_date = datetime.strptime(
@@ -350,67 +416,55 @@ def ingest_topic(keyword: str, category: str,
         except Exception:
             pub_date = datetime.now(timezone.utc).isoformat()
 
-        article_data = {
-            "source_id":        article["_source_id"],
-            "story_id":         story_id,
-            "gdelt_cluster_id": cluster_id,
-            "url":              url,
-            "raw_text":         "",           # Fetched separately by extractor
-            "published_at":     pub_date,
-            "language":         article.get("language", "English"),
-            "processed":        False,
-        }
         try:
-            sb.table("articles").insert(article_data).execute()
+            sb.table("articles").insert({
+                "source_id":        source_id,
+                "story_id":         story_id,
+                "gdelt_cluster_id": cluster_id,
+                "url":              url,
+                "raw_text":         "",
+                "published_at":     pub_date,
+                "language":         article.get("language", "English"),
+                "processed":        False,
+            }).execute()
             stored += 1
         except Exception as e:
             print(f"  ⚠️  Article insert failed ({url[:50]}...): {e}")
             skipped += 1
 
-        time.sleep(0.05)  # Gentle rate limiting
+        time.sleep(0.05)
 
     print(f"  Articles stored: {stored}  skipped: {skipped}")
     return {
-        "keyword":   keyword,
+        "keyword":    keyword,
         "cluster_id": cluster_id,
-        "story_id":  story_id,
-        "fetched":   len(raw_articles),
-        "universe":  len(universe_articles),
-        "stored":    stored,
-        "skipped":   skipped,
+        "story_id":   story_id,
+        "fetched":    len(raw_articles),
+        "filtered":   len(filtered),
+        "selected":   len(selected),
+        "stored":     stored,
+        "skipped":    skipped,
     }
 
 
 def ingest_all_categories(timespan: str = "24h") -> list[dict]:
-    """Run ingestion for all 9 categories using their primary keywords."""
     results = []
     for category, keywords in CATEGORY_KEYWORDS.items():
-        # Use first keyword as primary for now
-        # Phase 2: run multiple keywords per category
-        primary_keyword = keywords[0]
-        result = ingest_topic(primary_keyword, category, timespan=timespan)
+        result = ingest_topic(keywords[0], category, timespan=timespan)
         results.append(result)
-        time.sleep(1)  # Be respectful to GDELT
+        time.sleep(1)
     return results
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import sys
-
     if len(sys.argv) >= 3:
-        # python gdelt.py "Iran strikes" "Middle East & Gulf"
-        kw = sys.argv[1]
-        cat = sys.argv[2]
-        result = ingest_topic(kw, cat)
+        result = ingest_topic(sys.argv[1], sys.argv[2])
         print(f"\nResult: {result}")
     elif len(sys.argv) == 2 and sys.argv[1] == "all":
-        # python gdelt.py all
         results = ingest_all_categories()
-        print(f"\n{'='*50}")
-        print(f"Ingested {len(results)} categories")
-        total_stored = sum(r.get("stored", 0) for r in results)
-        print(f"Total articles stored: {total_stored}")
+        print(f"\nTotal stored: {sum(r.get('stored', 0) for r in results)}")
     else:
         print("Usage:")
         print('  python gdelt.py "keyword" "Category Label"')
